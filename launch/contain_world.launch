@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+
+<launch>
+  
+  <arg name="args" default=""/>
+  
+  <include file="$(find ros_contain_gazebo_plugin)/launch/start.launch">
+    <arg name="world" value="$(find ros_contain_gazebo_plugin)/worlds/contain_example.world"/>
+    <arg name="args" default="$(arg args)"/>
+  </include>
+
+</launch>
