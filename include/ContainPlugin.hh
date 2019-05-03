@@ -26,7 +26,7 @@
 #include <ros/ros.h>
 #include <ros/callback_queue.h>
 
-#include <std_msgs/Bool.h>
+#include <std_msgs/String.h>
 
 namespace gazebo
 {
@@ -96,7 +96,7 @@ namespace gazebo
     private: std::string robot_namespace_, contain_topic_;
 	/// ROS publisher
     private: ros::Publisher contain_publisher_;
-    private: std_msgs::Bool contain_msg_;
+    private: std_msgs::String contain_msg_;
 
     /// \brief Callback for enable service using Ignition messages.
     /// \param[in] _req Request, true to enable
@@ -108,7 +108,7 @@ namespace gazebo
 
     /// \brief Publish a message indicating if the box contains an entity
     /// \param[in] _contains True if the geometry contains the target
-    private: void PublishContains(bool _contains);
+    private: void PublishContains(bool _contains, int i);
 
     /// \brief Pointer to private data
     private: std::unique_ptr<ContainPluginPrivate> dataPtr;

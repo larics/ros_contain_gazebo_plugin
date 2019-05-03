@@ -48,10 +48,10 @@ namespace gazebo
     public: physics::WorldPtr world;
 
     /// \brief Scoped name of the entity we're checking.
-    public: std::string entityName;
+    public: std::vector<std::string> entityNames;
 
     /// \brief Pointer to the entity we're checking.
-    public: physics::EntityWeakPtr entity;
+    public: std::vector<physics::EntityWeakPtr> entities;
 
     /// \brief Box representing the volume to check.
     public: ignition::math::OrientedBoxd box;
@@ -74,7 +74,7 @@ namespace gazebo
     public: std::string ns;
 
     /// \brief 1 if contains, 0 if doesn't contain, -1 if unset
-    public: int contain = -1;
+    public: std::vector<int> contain;
   };
 }
 
@@ -101,7 +101,17 @@ void ContainPlugin::Load(physics::WorldPtr _world, sdf::ElementPtr _sdf)
           << "initialized." << std::endl;
     return;
   }
-  this->dataPtr->entityName = _sdf->Get<std::string>("entity");
+  std::stringstream entity_stream(_sdf->Get<std::string>("entity"));
+  std::string buffer;
+  while(entity_stream >> buffer) {
+    this->dataPtr->entityNames.push_back(buffer);
+    this->dataPtr->contain.push_back(-1);
+  }
+  this->dataPtr->entities.resize(this->dataPtr->entityNames.size());
+  for(int i=0; i<this->dataPtr->entityNames.size(); i++) {
+    gzmsg << "Loaded entity " << this->dataPtr->entityNames.at(i) << std::endl;
+  }
+  
 
   // Namespace
   if (!_sdf->HasElement("namespace"))
@@ -200,7 +210,7 @@ void ContainPlugin::Load(physics::WorldPtr _world, sdf::ElementPtr _sdf)
   // ROS Publisher
     if (!contain_topic_.empty())
     {
-        ros::AdvertiseOptions ops = ros::AdvertiseOptions::create<std_msgs::Bool>(
+        ros::AdvertiseOptions ops = ros::AdvertiseOptions::create<std_msgs::String>(
             contain_topic_, 1,
             ros::SubscriberStatusCallback(), ros::SubscriberStatusCallback(), ros::VoidConstPtr(), &callback_queue_);
         contain_publisher_ = this->rosnode_->advertise(ops);
@@ -260,7 +270,9 @@ bool ContainPlugin::Enable(const bool _enable)
   {
     this->dataPtr->updateConnection.reset();
     this->dataPtr->containIgnPub = ignition::transport::Node::Publisher();
-    this->dataPtr->contain = -1;
+    for(int i=0; i<this->dataPtr->contain.size(); i++) {
+      this->dataPtr->contain.at(i) = -1;
+    }
 
     gzmsg << "Stopped contain plugin [" << this->dataPtr->ns << "]"
           << std::endl;
@@ -273,68 +285,75 @@ bool ContainPlugin::Enable(const bool _enable)
 void ContainPlugin::OnUpdate(const common::UpdateInfo &/*_info*/)
 {
   // Only get the entity once
-  physics::EntityPtr entity = this->dataPtr->entity.lock();
-  if (!entity)
-  {
-    this->dataPtr->entity = this->dataPtr->world->EntityByName(
-        this->dataPtr->entityName);
-    entity = this->dataPtr->entity.lock();
+  for(int i=0; i<this->dataPtr->entityNames.size(); i++) {
+
+    physics::EntityPtr entity = this->dataPtr->entities.at(i).lock();
     if (!entity)
     {
-      // Could not find entity being tested
-      this->PublishContains(false);
-      return;
-    }
-  }
-
-  ignition::math::Vector3d entityInWorldFrame =
-    entity->WorldPose().Pos();
-
-  ignition::math::Vector3d entityInBoxFrame;
-  if (!this->dataPtr->containerEntityName.empty())
-  {
-    physics::EntityPtr referenceEntity = this->dataPtr->containerEntity.lock();
-    // box is in a potentially moving reference frame
-    if (!referenceEntity)
-    {
-      this->dataPtr->containerEntity = this->dataPtr->world->EntityByName(
-        this->dataPtr->containerEntityName);
-      referenceEntity = this->dataPtr->containerEntity.lock();
-      if (!referenceEntity)
+      this->dataPtr->entities.at(i) = this->dataPtr->world->EntityByName(
+          this->dataPtr->entityNames.at(i));
+      entity = this->dataPtr->entities.at(i).lock();
+      if (!entity)
       {
-        // Could not find reference entity
-        this->PublishContains(false);
+        // Could not find entity being tested
+        this->PublishContains(false, i);
         return;
       }
     }
 
-    auto worldToBox = referenceEntity->WorldPose();
-    auto boxToWorld = worldToBox.Inverse();
-    // Transform the entity vector from world frame to the frame the box is in
-    entityInBoxFrame = (boxToWorld.Rot() * entityInWorldFrame)
-      + boxToWorld.Pos();
-  }
-  else
-  {
-    // box frame is world frame
-    entityInBoxFrame = entityInWorldFrame;
-  }
+    ignition::math::Vector3d entityInWorldFrame = entity->WorldPose().Pos();
 
-  this->PublishContains(this->dataPtr->box.Contains(entityInBoxFrame));
+    ignition::math::Vector3d entityInBoxFrame;
+    if (!this->dataPtr->containerEntityName.empty())
+    {
+      physics::EntityPtr referenceEntity = this->dataPtr->containerEntity.lock();
+      // box is in a potentially moving reference frame
+      if (!referenceEntity)
+      {
+        this->dataPtr->containerEntity = this->dataPtr->world->EntityByName(
+          this->dataPtr->containerEntityName);
+        referenceEntity = this->dataPtr->containerEntity.lock();
+        if (!referenceEntity)
+        {
+          // Could not find reference entity
+          this->PublishContains(false, i);
+          return;
+        }
+      }
+
+      auto worldToBox = referenceEntity->WorldPose();
+      auto boxToWorld = worldToBox.Inverse();
+      // Transform the entity vector from world frame to the frame the box is in
+      entityInBoxFrame = (boxToWorld.Rot() * entityInWorldFrame)
+        + boxToWorld.Pos();
+    }
+    else
+    {
+      // box frame is world frame
+      entityInBoxFrame = entityInWorldFrame;
+    }
+
+    this->PublishContains(this->dataPtr->box.Contains(entityInBoxFrame), i);
+    }
 }
 
 //////////////////////////////////////////////////
-void ContainPlugin::PublishContains(const bool _contains)
+void ContainPlugin::PublishContains(const bool _contains, int i)
 {
   int containNow = _contains ? 1 : 0;
-  if (containNow != this->dataPtr->contain)
+  if (containNow != this->dataPtr->contain.at(i))
   {
-    this->dataPtr->contain = containNow;
+    this->dataPtr->contain.at(i) = containNow;
     // ROS send msg
+    gzmsg << "Publishing " << containNow << std::endl;
+    if(containNow==1)
     {
-      std_msgs::Bool msg;
-      msg.data = true;
+      std_msgs::String msg;
+      msg.data = this->dataPtr->entityNames.at(i);
       this->contain_publisher_.publish(msg);
+    }
+    else{
+      gzmsg << "Entity " << this->dataPtr->entityNames.at(i) << " has left the building" << std::endl;
     }
   }
 }
