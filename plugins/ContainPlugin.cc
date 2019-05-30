@@ -75,6 +75,12 @@ namespace gazebo
 
     /// \brief 1 if contains, 0 if doesn't contain, -1 if unset
     public: std::vector<int> contain;
+
+    /// /brief update period for the plugin
+    public: common::Time updatePeriod; 
+    /// /brief update period for the plugin
+    public: common::Time lastUpdateTime; 
+
   };
 }
 
@@ -185,6 +191,15 @@ void ContainPlugin::Load(physics::WorldPtr _world, sdf::ElementPtr _sdf)
     return;
   }
   robot_namespace_ = _sdf->Get<std::string>("robot_namespace");
+
+  if (!_sdf->HasElement("rate"))
+  {
+    this->dataPtr->updatePeriod = 1.0;
+  }
+  else {
+    double rate = _sdf->Get<double>("rate");
+    this->dataPtr->updatePeriod = 1.0/rate;
+  }
   
   // robot_namespace_
   if (!_sdf->HasElement("contain_topic"))
@@ -220,6 +235,9 @@ void ContainPlugin::Load(physics::WorldPtr _world, sdf::ElementPtr _sdf)
   {
     this->Enable(true);
   }
+
+  // initialize the time of the last update
+  this->dataPtr->lastUpdateTime = 0.0;
 }
 
 //////////////////////////////////////////////////
@@ -284,6 +302,13 @@ bool ContainPlugin::Enable(const bool _enable)
 /////////////////////////////////////////////////
 void ContainPlugin::OnUpdate(const common::UpdateInfo &/*_info*/)
 {
+  // Only update if enought time has passed
+  if (this->dataPtr->world->SimTime() - this->dataPtr->lastUpdateTime < this->dataPtr->updatePeriod)
+  {
+    return;
+  }
+  // set last update time
+  this->dataPtr->lastUpdateTime = this->dataPtr->world->SimTime();
   // Only get the entity once
   for(int i=0; i<this->dataPtr->entityNames.size(); i++) {
 
@@ -297,7 +322,7 @@ void ContainPlugin::OnUpdate(const common::UpdateInfo &/*_info*/)
       {
         // Could not find entity being tested
         this->PublishContains(false, i);
-        return;
+        continue;
       }
     }
 
@@ -317,7 +342,7 @@ void ContainPlugin::OnUpdate(const common::UpdateInfo &/*_info*/)
         {
           // Could not find reference entity
           this->PublishContains(false, i);
-          return;
+          continue;
         }
       }
 
@@ -340,12 +365,13 @@ void ContainPlugin::OnUpdate(const common::UpdateInfo &/*_info*/)
 //////////////////////////////////////////////////
 void ContainPlugin::PublishContains(const bool _contains, int i)
 {
+  
   int containNow = _contains ? 1 : 0;
+  // check if the status of the container has changed
   if (containNow != this->dataPtr->contain.at(i))
   {
     this->dataPtr->contain.at(i) = containNow;
-    // ROS send msg
-    gzmsg << "Publishing " << containNow << std::endl;
+    // publish message only if the entity has just entered the container
     if(containNow==1)
     {
       std_msgs::String msg;
@@ -353,7 +379,7 @@ void ContainPlugin::PublishContains(const bool _contains, int i)
       this->contain_publisher_.publish(msg);
     }
     else{
-      gzmsg << "Entity " << this->dataPtr->entityNames.at(i) << " has left the building" << std::endl;
+      // gzmsg << "Entity " << this->dataPtr->entityNames.at(i) << " has left the building" << std::endl;
     }
   }
 }
